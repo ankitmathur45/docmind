@@ -5,6 +5,9 @@ import pandas as pd
 from src.rag import RAGPipeline
 from src.evaluator import RAGEvaluator
 from src.test_set import TEST_SET
+from dotenv import load_dotenv
+
+load_dotenv()
 
 st.set_page_config(
     page_title="PDF Q&A",
