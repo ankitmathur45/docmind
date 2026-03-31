@@ -4,10 +4,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langsmith import traceable
 import faiss
 import numpy as np
 import os
-import pickle
+from dotenv import load_dotenv
+
+load_dotenv()
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 CHUNK_SIZE      = 500
@@ -25,14 +28,9 @@ class RAGPipeline:
         self.current_pdf     = None
 
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful assistant that answers questions 
-based strictly on the provided context from a document.
-
-Rules:
-- Only use information from the context below
-- If the answer is not in the context, say "I don't find this in the document"
-- Be concise and precise
-- Quote relevant parts when helpful
+            ("system", """You are DocMind, a helpful document analyst.
+Answer questions based strictly on the provided context.
+If the answer is not in the context, say 'I don't find this in the document.'
 
 Context:
 {context}"""),
@@ -42,26 +40,21 @@ Context:
 
     def load_pdf(self, pdf_path: str) -> dict:
         """Extract text, chunk it, embed it, build FAISS index."""
-        # Extract text
         reader    = PdfReader(pdf_path)
         full_text = ""
         for page in reader.pages:
             full_text += page.extract_text() or ""
 
-        # Chunk
         splitter     = RecursiveCharacterTextSplitter(
             chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
         )
         self.chunks  = splitter.split_text(full_text)
 
-        # Embed
-        embeddings = self.embedding_model.encode(
+        embeddings   = self.embedding_model.encode(
             self.chunks, show_progress_bar=False
         )
-
-        # Build FAISS index
-        dimension   = embeddings.shape[1]
-        self.index  = faiss.IndexFlatL2(dimension)
+        dimension    = embeddings.shape[1]
+        self.index   = faiss.IndexFlatL2(dimension)
         self.index.add(embeddings.astype(np.float32))
         self.current_pdf = os.path.basename(pdf_path)
 
@@ -72,30 +65,43 @@ Context:
             "characters": len(full_text),
         }
 
-    def query(self, question: str, k: int = TOP_K) -> dict:
-        """Retrieve relevant chunks and generate a grounded answer."""
-        if self.index is None:
-            raise ValueError("No PDF loaded. Call load_pdf() first.")
-
-        # Retrieve
+    @traceable(name="docmind-retrieval")
+    def _retrieve(self, question: str, k: int) -> dict:
+        """FAISS similarity search — traced as separate span."""
         query_embedding    = self.embedding_model.encode(
             [question]
         ).astype(np.float32)
         distances, indices = self.index.search(query_embedding, k)
-        retrieved_chunks   = [self.chunks[i] for i in indices[0]]
+        chunks             = [self.chunks[i] for i in indices[0]]
+        return {
+            "question":  question,
+            "chunks":    chunks,
+            "distances": [round(float(d), 4) for d in distances[0]],
+        }
 
-        # Generate
-        context = "\n\n---\n\n".join(retrieved_chunks)
-        answer  = self.chain.invoke({
+    @traceable(name="docmind-generation")
+    def _generate(self, question: str, context: str) -> str:
+        """LLM generation — traced as separate span."""
+        return self.chain.invoke({
             "context":  context,
             "question": question
         })
 
+    @traceable(name="docmind-query")
+    def query(self, question: str, k: int = TOP_K) -> dict:
+        """Full RAG pipeline — parent trace."""
+        if self.index is None:
+            raise ValueError("No PDF loaded. Call load_pdf() first.")
+
+        retrieval = self._retrieve(question, k)
+        context   = "\n\n---\n\n".join(retrieval["chunks"])
+        answer    = self._generate(question, context)
+
         return {
             "question": question,
             "answer":   answer,
-            "sources":  retrieved_chunks,
-            "distances": [round(float(d), 4) for d in distances[0]],
+            "sources":  retrieval["chunks"],
+            "distances": retrieval["distances"],
         }
 
     def is_loaded(self) -> bool:
