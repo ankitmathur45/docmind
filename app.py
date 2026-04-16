@@ -5,6 +5,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from src.rag import RAGPipeline
 from src.corrective_rag import CorrectiveRAGPipeline
+from src.agent import DocMindAgent
 from src.evaluator import RAGEvaluator
 from src.test_set import TEST_SET
 
@@ -35,12 +36,16 @@ if uploaded_file:
        st.session_state.doc_info["filename"] != uploaded_file.name:
         with st.sidebar:
             with st.spinner("Reading and indexing PDF..."):
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".pdf"
+                ) as tmp:
                     tmp.write(uploaded_file.read())
                     tmp_path = tmp.name
                 info = st.session_state.rag.load_pdf(tmp_path)
                 os.unlink(tmp_path)
-                st.session_state.doc_info    = {**info, "filename": uploaded_file.name}
+                st.session_state.doc_info    = {
+                    **info, "filename": uploaded_file.name
+                }
                 st.session_state.messages    = []
                 st.session_state.eval_report = None
         st.sidebar.success("Document indexed successfully")
@@ -55,9 +60,14 @@ if st.session_state.doc_info:
 
 st.sidebar.divider()
 st.sidebar.subheader("⚙️ Settings")
-mode         = st.sidebar.radio("RAG Mode", ["Standard", "Corrective"])
+mode         = st.sidebar.radio("RAG Mode", ["Standard", "Corrective", "Agent"])
 top_k        = st.sidebar.slider("Chunks to retrieve", 1, 6, 3)
 show_sources = st.sidebar.checkbox("Show source chunks", value=True)
+
+if mode == "Corrective":
+    st.sidebar.caption("Grades chunks for relevance before generating. Slower but more accurate.")
+elif mode == "Agent":
+    st.sidebar.caption("Selects the best tool for each question — search, summarise, calculate, or metadata.")
 
 if st.sidebar.button("🗑️ Clear Chat"):
     st.session_state.messages = []
@@ -72,33 +82,38 @@ with tab1:
         st.info("👈 Upload a PDF from the sidebar to get started.")
         st.stop()
 
+    # Mode banner
     if mode == "Corrective":
-        st.info("🔄 Corrective RAG mode — chunks are graded for relevance "
-                "before generation. Slower but more accurate.")
+        st.info("🔄 Corrective RAG — chunks graded before generation.")
+    elif mode == "Agent":
+        st.info("🤖 Agent mode — selects tools based on your question.")
 
+    # Chat history
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            if msg["role"] == "assistant" and show_sources and "sources" in msg:
-                with st.expander("📚 Source chunks"):
-                    if msg.get("rewritten_question"):
-                        st.markdown(f"**Question rewritten to:** {msg['rewritten_question']}")
-                    if msg.get("relevance_scores"):
-                        for i, (source, score) in enumerate(
-                            zip(msg["sources"], msg["relevance_scores"]), 1
-                        ):
-                            color = "🟢" if score == "relevant" else "🔴"
-                            st.markdown(f"{color} **Chunk {i}** ({score})")
-                            st.markdown(f"> {source[:200]}...")
-                            st.divider()
-                    else:
+            if msg["role"] == "assistant":
+                if msg.get("tools_used"):
+                    st.caption("🔧 Tools used: " +
+                               ", ".join(t["tool"] for t in msg["tools_used"]))
+                if show_sources and msg.get("sources"):
+                    with st.expander("📚 Source chunks"):
                         for i, source in enumerate(msg["sources"], 1):
-                            st.markdown(f"**Chunk {i}**")
+                            score = msg["relevance_scores"][i-1] \
+                                    if msg.get("relevance_scores") else None
+                            color = "🟢" if score == "relevant" \
+                                    else "🔴" if score == "irrelevant" else "⚪"
+                            label = f"{color} **Chunk {i}**" + \
+                                    (f" ({score})" if score else "")
+                            st.markdown(label)
                             st.markdown(f"> {source[:200]}...")
                             st.divider()
 
+    # Chat input
     if question := st.chat_input("Ask a question about the document..."):
-        st.session_state.messages.append({"role": "user", "content": question})
+        st.session_state.messages.append({
+            "role": "user", "content": question
+        })
         with st.chat_message("user"):
             st.markdown(question)
 
@@ -107,22 +122,37 @@ with tab1:
                 with st.spinner("Grading chunks and generating answer..."):
                     crag   = CorrectiveRAGPipeline(st.session_state.rag)
                     result = crag.query(question)
+                result["tools_used"] = []
+
+            elif mode == "Agent":
+                with st.spinner("Agent thinking — selecting tools..."):
+                    agent  = DocMindAgent(st.session_state.rag)
+                    result = agent.query(question)
+                result["sources"]            = []
+                result["relevance_scores"]   = []
+                result["rewritten_question"] = ""
+
             else:
                 with st.spinner("Searching and generating..."):
                     result = st.session_state.rag.query(question, k=top_k)
                 result["relevance_scores"]   = []
                 result["rewritten_question"] = ""
+                result["tools_used"]         = []
 
             st.markdown(result["answer"])
 
-            if result.get("rewritten_question"):
-                st.caption(f"🔄 Question rewritten to: {result['rewritten_question']}")
+            if result.get("tools_used"):
+                st.caption("🔧 Tools used: " +
+                           ", ".join(t["tool"] for t in result["tools_used"]))
 
-            if show_sources:
+            if result.get("rewritten_question"):
+                st.caption(f"🔄 Rewritten to: {result['rewritten_question']}")
+
+            if show_sources and result.get("sources"):
                 with st.expander("📚 Source chunks"):
                     for i, source in enumerate(result["sources"], 1):
                         score = result["relevance_scores"][i-1] \
-                                if result["relevance_scores"] else None
+                                if result.get("relevance_scores") else None
                         color = "🟢" if score == "relevant" \
                                 else "🔴" if score == "irrelevant" else "⚪"
                         label = f"{color} **Chunk {i}**" + \
@@ -134,9 +164,10 @@ with tab1:
         st.session_state.messages.append({
             "role":               "assistant",
             "content":            result["answer"],
-            "sources":            result["sources"],
+            "sources":            result.get("sources", []),
             "relevance_scores":   result.get("relevance_scores", []),
             "rewritten_question": result.get("rewritten_question", ""),
+            "tools_used":         result.get("tools_used", []),
         })
 
 # ── TAB 2: Evaluation ──────────────────────────────────────────────────────
@@ -169,6 +200,7 @@ with tab2:
 
             st.divider()
             st.subheader("Aggregate Metrics")
+
             st.markdown("**Retrieval Quality**")
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Precision@K", f"{agg['mean_precision_at_k']:.2f}")
