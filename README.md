@@ -6,7 +6,8 @@ Fully local — no internet, no API costs, no data leaving your machine.
 ## Features
 
 - 💬 Chat with any PDF document
-- 🔄 Two RAG modes — Standard and Corrective
+- 🔄 Three RAG modes — Standard, Corrective, Agent
+- 🤖 Tool-using agent — routes questions to the right tool automatically
 - 📊 Retrieval evaluation dashboard — 7 metrics
 - 🔍 LangSmith observability — every query traced
 - 🟢🔴 Chunk relevance indicators in UI
@@ -38,9 +39,8 @@ Question → Retrieve → Grade chunks
 | 2 | Retrieval evaluation — Precision, Recall, MRR, NDCG | ✅ Done |
 | 3 | LangSmith observability — tracing and prompt versioning | ✅ Done |
 | 4 | Corrective RAG with LangGraph — chunk grading, query rewriting | ✅ Done |
-| 5 | Tool-using agent | ⬜ Next |
-| 6 | LangServe deployment | ⬜ Planned |
-| 7 | Multi-agent supervisor | ⬜ Planned |
+| 5 | Tool-using agent — search, summarise, calculate, metadata | ✅ Done |
+
 
 ## Evaluation Results
 
