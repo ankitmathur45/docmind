@@ -1,85 +1,96 @@
-# 📄 RAG PDF Q&A with Retrieval Evaluation
+# 📄 DocMind
 
-Ask questions about any PDF document using a fully local RAG pipeline.
-Includes a comprehensive evaluation dashboard to measure retrieval quality
-and answer faithfulness. No API costs. No data leaving your machine.
+A production-quality RAG system for PDF document Q&A.
+Fully local — no internet, no API costs, no data leaving your machine.
 
-## How It Works
+## Features
 
-### Chat Pipeline
-1. Upload a PDF — text extracted and split into chunks
-2. Chunks embedded and stored in a local FAISS vector index
-3. Ask a question — embedded and matched against chunks
-4. Top matching chunks + question sent to Llama 3.2
-5. Answer grounded in document with source references shown
-
-### Evaluation Pipeline
-1. Hand-crafted test set with ground truth relevant chunks
-2. Retrieval metrics — how well does FAISS find the right chunks?
-3. Answer quality metrics — is the LLM faithful to the context?
-4. Latency metrics — where is the bottleneck?
+- 💬 Chat with any PDF document
+- 🔄 Two RAG modes — Standard and Corrective
+- 📊 Retrieval evaluation dashboard — 7 metrics
+- 🔍 LangSmith observability — every query traced
+- 🟢🔴 Chunk relevance indicators in UI
 
 ## Architecture
+
+### Standard RAG
+
 ```
-PDF → PyPDF → RecursiveCharacterTextSplitter → 
-SentenceTransformers → FAISS Index
-
-Question → Embed → FAISS Search → Top K Chunks → 
-ChatOllama → Grounded Answer
-
-Test Set → RAGEvaluator → Metrics Dashboard
+PDF → Chunk → Embed → FAISS Index
+Question → Embed → Retrieve → Generate → Answer
 ```
 
-## Evaluation Metrics
+### Corrective RAG (LangGraph)
 
-### Retrieval Quality
-| Metric | What it measures |
-|--------|-----------------|
-| Precision@K | Of K chunks retrieved, what fraction are relevant? |
-| Recall@K | Of all relevant chunks, what fraction did we find? |
-| Hit Rate@K | Did at least one relevant chunk appear in top K? |
-| MRR | How highly ranked is the first relevant chunk? |
-| NDCG@K | Are the most relevant chunks ranked highest? |
+```
+Question → Retrieve → Grade chunks
+                    ↓ relevant    ↓ irrelevant
+                Generate      Rewrite question → Retrieve again
+                    ↓
+                  Answer
+```
 
-### Answer Quality
-| Metric | What it measures |
-|--------|-----------------|
-| Faithfulness | Does the answer stay within retrieved context? |
-| Answer Relevance | Does the answer address the question asked? |
+## DocMind Roadmap
 
-### System
-| Metric | What it measures |
-|--------|-----------------|
-| Retrieval Latency | Time for FAISS similarity search |
-| Full RAG Latency | End-to-end time including LLM generation |
+| Step | Feature | Status |
+|------|---------|--------|
+| 1 | PDF Q&A with FAISS + Ollama | ✅ Done |
+| 2 | Retrieval evaluation — Precision, Recall, MRR, NDCG | ✅ Done |
+| 3 | LangSmith observability — tracing and prompt versioning | ✅ Done |
+| 4 | Corrective RAG with LangGraph — chunk grading, query rewriting | ✅ Done |
+| 5 | Tool-using agent | ⬜ Next |
+| 6 | LangServe deployment | ⬜ Planned |
+| 7 | Multi-agent supervisor | ⬜ Planned |
+
+## Evaluation Results
+
+| Metric | Score |
+|--------|-------|
+| Mean Recall@3 | 1.00 |
+| Mean NDCG@3 | 0.92 |
+| Mean Faithfulness | 0.90 |
+| Mean Answer Relevance | 1.00 |
+| Mean Retrieval Latency | 0.011s |
 
 ## Setup
+
 ```bash
-git clone git@github.com:ankitmathur45/rag-pdf-qa.git
-cd rag-pdf-qa
+git clone git@github.com:ankitmathur45/docmind.git
+cd docmind
 uv venv .venv --python 3.12
 .venv\Scripts\activate
 uv pip install -r requirements.txt
-
-# Ollama must be running with llama3.2
-ollama pull llama3.2
-
-streamlit run app.py
 ```
 
-## Results on Sample Test Set
-- Mean Recall@3: 1.00 — finds relevant chunks every time
-- Mean NDCG@3: 0.92 — ranks best chunks near the top
-- Mean Faithfulness: 0.90 — answers grounded in context
-- Mean Answer Relevance: 1.00 — always addresses the question
-- Mean Retrieval Latency: 0.011s — FAISS is near-instant
-- Mean Full RAG Latency: 2.56s — LLM dominates total latency
+Create a `.env` file in the project root:
+
+```
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=your_key_here
+LANGCHAIN_PROJECT=docmind
+LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
+```
+
+Pull the model and run:
+
+```bash
+ollama pull llama3.2
+python -m streamlit run app.py
+```
 
 ## Tech Stack
+
 - Python 3.12
-- LangChain + LangChain Core
+- LangChain + LangGraph
 - FAISS (local vector store)
 - Sentence Transformers (local embeddings)
 - Llama 3.2 via Ollama
-- RapidFuzz (fuzzy chunk matching for evaluation)
+- LangSmith (observability)
+- RapidFuzz (fuzzy chunk matching)
 - Streamlit
+
+## Note on Answer Quality
+
+Optimised for local inference on consumer hardware (GTX 1660 Ti, 6GB VRAM).
+Answer quality scales significantly with larger models — production deployments
+would use Llama 3.1 70B or a cloud LLM for the generation and grading steps.
