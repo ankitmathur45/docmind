@@ -86,23 +86,23 @@ def ndcg_at_k(retrieved: list, relevance_scores: dict, k: int) -> float:
 
 class AnswerEvaluator:
     def __init__(self, model: str = "llama3.2"):
-            llm = ChatOllama(model=model)
-            parser = StrOutputParser()
+        llm = ChatOllama(model=model)
+        parser = StrOutputParser()
 
-            self.faithfulness_chain = ChatPromptTemplate.from_messages([
-            ("system", """You are an evaluation assistant checking if an answer is 
+        self.faithfulness_chain = ChatPromptTemplate.from_messages([
+            ("system", """You are an evaluation assistant checking if an answer is
 faithful to the provided context — using only information from the context.
 
 Respond with ONLY a JSON object:
 {{"score": 0.9, "reason": "one sentence explanation"}}
 
 1.0 = completely faithful
-0.5 = partially faithful  
+0.5 = partially faithful
 0.0 = unfaithful or hallucinated"""),
             ("human", "Context:\n{context}\n\nAnswer:\n{answer}\n\nIs this answer faithful?")
         ]) | llm | parser
 
-            self.relevance_chain = ChatPromptTemplate.from_messages([
+        self.relevance_chain = ChatPromptTemplate.from_messages([
             ("system", """You are an evaluation assistant checking if an answer
 addresses the question asked.
 
